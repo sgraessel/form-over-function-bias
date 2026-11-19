@@ -1,22 +1,15 @@
 import json
-
 import yaml
 
 from model import get_model
-from prompts import (
-    aave_prompt,
-    basic_english_prompt,
-    complex_prompt,
-    error_prompt,
-    simple_prompt,
-)
+from prompts import translation_prompt
 from utils.utils import load_config, read_jsonl_file, write_file
 
 
 def rewrite_answers(
     model_name_or_path: str = "gpt-4.1",
     src_file: str = "data/generated_answers/gpt-4.1-answers.json",
-    rewrite_type: str = "aave",
+    target_language: str = "Indian English",
 ) -> None:
 
     config = load_config("config.yml")
@@ -30,47 +23,18 @@ def rewrite_answers(
     new_dicts = [dict(dictionary) for dictionary in original_dicts]
 
     texts = [
-        [entry["question"] for entry in original_dicts],
         [entry["answers"]["answer1"]["answer"] for entry in original_dicts],
-        [entry["answers"]["answer2"]["answer"] for entry in original_dicts],
+        # [entry["answers"]["answer2"]["answer"] for entry in original_dicts],
     ]
 
-    # rewrite to AAVE, simplified English, or introduce errors
-    if rewrite_type == "aave":
-        prompt = aave_prompt
-        file_ending = "_aae.json"
+    prompt = translation_prompt
+    file_ending = target_language + ".json"
 
-    elif rewrite_type == "simple":
-        prompt = simple_prompt
-        file_ending = "_simple.json"
-
-    elif rewrite_type == "errors":
-        prompt = error_prompt
-        file_ending = "_errors.json"
-
-    else:
-        raise ValueError("Rewrite type must be one of [aave/simple/errors]")
-
-    prompts = (
-        [prompt(question, answer) for (question, answer) in zip(texts[0], texts[1])]
-        if rewrite_type == "errors"
-        else (
-            [prompt(question) for question in texts[0]],
-            [prompt(answer) for answer in texts[1]],
-        )
-    )
+    prompts = [prompt(target_language, answer) for answer in texts[1]]
 
     system_prompts = [""] * len(prompts[0])
 
-    # generate either only answers (errors) or questions and answers (aave/simplified)
-    responses = (
-        model.generate(system_prompts=[""] * len(prompts), input_texts=prompts)
-        if rewrite_type == "errors"
-        else [
-            model.generate(system_prompts=system_prompts, input_texts=prompts[0]),
-            model.generate(system_prompts=system_prompts, input_texts=prompts[1]),
-        ]
-    )
+    responses = model.generate(system_prompts=system_prompts, input_texts=prompts)
 
     for i, question in enumerate(new_dicts):
         question["model_name"] = model_name_or_path
@@ -83,11 +47,7 @@ def rewrite_answers(
         del question["model_name"]
         del question["temperature"]
 
-        if rewrite_type == "errors":
-            question["answers"]["answer1"]["answer"] = responses[i][0]
-        else:
-            question["question"] = responses[0][i][0]
-            question["answers"]["answer1"]["answer"] = responses[1][i][0]
+        question["answers"]["answer1"]["answer"] = responses[i][0]
 
     write_file(src_file.replace(".json", file_ending), new_dicts)
 
@@ -98,6 +58,7 @@ def rewrite_onestopqa(
     outfile: str = "data/readability_metrics/onestopqa_test_data/simple_prompt.json",
 ) -> None:
     from evaluation.calculate_readability_metrics import load_onestopqa
+
     with open("config.yml", "r") as file:
         config = yaml.safe_load(file)
 
